@@ -15,6 +15,7 @@
 #include <QMessageBox>
 #include <QLineEdit>
 #include <QTableWidgetItem>
+#include <QAbstractItemView>
 #include <QDir>
 #include <QCoreApplication>
 #include <QRegularExpression>
@@ -24,7 +25,7 @@
 #include <QSet>
 #include <QStringList>
 
-    int main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
@@ -239,6 +240,8 @@
     QLabel *tableName = new QLabel("No Table Selected");
 
     QTableWidget *table = new QTableWidget(0, 0);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
 
     table->horizontalHeader()->setSectionResizeMode(
         QHeaderView::Stretch
@@ -250,7 +253,9 @@
     QPushButton *insert = new QPushButton("Insert");
     QPushButton *update = new QPushButton("Update");
     QPushButton *remove = new QPushButton("Delete");
-    QPushButton *search = new QPushButton("Search");
+    QPushButton *search = new QPushButton("Search All");
+    QPushButton *searchColumn = new QPushButton("Search Column");
+    QPushButton *sort = new QPushButton("Sort");
 
     QHBoxLayout *actions = new QHBoxLayout;
 
@@ -259,6 +264,8 @@
     actions->addWidget(update);
     actions->addWidget(remove);
     actions->addWidget(search);
+    actions->addWidget(searchColumn);
+    actions->addWidget(sort);
 
     workLayout->addWidget(heading);
     workLayout->addWidget(tableName);
@@ -566,6 +573,737 @@
             &window,
             "Success",
             "Table created successfully!\n\nFile:\n" + filePath
+            );
+    });
+
+
+    // INSERT RECORD
+
+    QObject::connect(insert, &QPushButton::clicked, [&]() {
+
+        QListWidgetItem *selectedDB = databaseList->currentItem();
+        QListWidgetItem *selectedTable = tableList->currentItem();
+
+        if (!selectedDB || !selectedTable) {
+            QMessageBox::warning(
+                &window,
+                "No Table Selected",
+                "Please select a database and table first."
+                );
+            return;
+        }
+
+        QString dbName = selectedDB->text();
+        QString tblName = selectedTable->text();
+
+        QString filePath =
+            QDir(projectPath).filePath(
+                dbName + "/" + tblName + ".csv"
+                );
+
+        // READ COLUMN NAMES
+
+        QFile file(filePath);
+
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                &window,
+                "File Error",
+                "Could not open the table file."
+                );
+            return;
+        }
+
+        QTextStream in(&file);
+
+        if (in.atEnd()) {
+            file.close();
+
+            QMessageBox::warning(
+                &window,
+                "Empty Table",
+                "The table does not contain column headers."
+                );
+            return;
+        }
+
+        QString headerLine = in.readLine();
+        file.close();
+
+        if (headerLine.trimmed().isEmpty()) {
+            QMessageBox::warning(
+                &window,
+                "Invalid Table",
+                "The table has an empty header row."
+                );
+            return;
+        }
+
+        QStringList columns = headerLine.split(',');
+
+        // ASK FOR EACH COLUMN VALUE
+
+        QStringList values;
+
+        for (const QString &column : columns) {
+
+            bool ok;
+
+            QString value = QInputDialog::getText(
+                &window,
+                "Insert Record",
+                "Enter value for " + column + ":",
+                QLineEdit::Normal,
+                "",
+                &ok
+                );
+
+            if (!ok)
+                return;
+
+            // This simple CSV version does not support commas or new lines in values.
+
+            if (value.contains(',') ||
+                value.contains('\n') ||
+                value.contains('\r')) {
+
+                QMessageBox::warning(
+                    &window,
+                    "Invalid Value",
+                    "Values cannot contain commas or new lines."
+                    );
+                return;
+            }
+
+            values.append(value);
+        }
+
+        // SAVE RECORD TO CSV
+
+        if (!file.open(QIODevice::WriteOnly |
+                       QIODevice::Append |
+                       QIODevice::Text)) {
+
+            QMessageBox::critical(
+                &window,
+                "Save Error",
+                "Could not save the new record."
+                );
+            return;
+        }
+
+        QTextStream out(&file);
+        out << values.join(',') << '\n';
+        file.close();
+
+        // DISPLAY NEW RECORD
+
+        int row = table->rowCount();
+        table->insertRow(row);
+
+        for (int col = 0; col < values.size(); col++) {
+            table->setItem(
+                row,
+                col,
+                new QTableWidgetItem(values[col])
+                );
+        }
+
+        table->setCurrentCell(row, 0);
+
+        window.statusBar()->showMessage(
+            "Record inserted into " + tblName
+            );
+
+        QMessageBox::information(
+            &window,
+            "Success",
+            "Record inserted successfully!"
+            );
+    });
+
+
+    // UPDATE RECORD
+
+    QObject::connect(update, &QPushButton::clicked, [&]() {
+
+        QListWidgetItem *selectedDB = databaseList->currentItem();
+        QListWidgetItem *selectedTable = tableList->currentItem();
+
+        if (!selectedDB || !selectedTable) {
+            QMessageBox::warning(
+                &window,
+                "No Table Selected",
+                "Please select a database and table first."
+                );
+            return;
+        }
+
+        int selectedRow = table->currentRow();
+
+        if (selectedRow < 0) {
+            QMessageBox::warning(
+                &window,
+                "No Record Selected",
+                "Please click a record in the table first."
+                );
+            return;
+        }
+
+        QString dbName = selectedDB->text();
+        QString tblName = selectedTable->text();
+
+        QString filePath =
+            QDir(projectPath).filePath(
+                dbName + "/" + tblName + ".csv"
+                );
+
+        // READ COLUMN HEADERS
+
+        QFile file(filePath);
+
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                &window,
+                "File Error",
+                "Could not open the table file."
+                );
+            return;
+        }
+
+        QTextStream in(&file);
+
+        if (in.atEnd()) {
+            file.close();
+
+            QMessageBox::warning(
+                &window,
+                "Empty Table",
+                "The table does not contain column headers."
+                );
+            return;
+        }
+
+        QString headerLine = in.readLine();
+        file.close();
+
+        QStringList columns = headerLine.split(',');
+
+        if (columns.isEmpty() || columns[0].trimmed().isEmpty()) {
+            QMessageBox::warning(
+                &window,
+                "Invalid Table",
+                "The table has invalid column headers."
+                );
+            return;
+        }
+
+        // ASK FOR UPDATED VALUES
+
+        QStringList updatedValues;
+
+        for (int col = 0; col < columns.size(); col++) {
+
+            QString oldValue;
+
+            if (table->item(selectedRow, col))
+                oldValue = table->item(selectedRow, col)->text();
+
+            bool ok;
+
+            QString value = QInputDialog::getText(
+                &window,
+                "Update Record",
+                "Enter new value for " + columns[col] + ":",
+                QLineEdit::Normal,
+                oldValue,
+                &ok
+                );
+
+            if (!ok)
+                return;
+
+            // This simple CSV version does not support commas or new lines.
+
+            if (value.contains(',') ||
+                value.contains('\n') ||
+                value.contains('\r')) {
+
+                QMessageBox::warning(
+                    &window,
+                    "Invalid Value",
+                    "Values cannot contain commas or new lines."
+                    );
+                return;
+            }
+
+            updatedValues.append(value);
+        }
+
+        // REWRITE CSV FILE WITH THE UPDATED RECORD
+
+        if (!file.open(QIODevice::WriteOnly |
+                       QIODevice::Truncate |
+                       QIODevice::Text)) {
+
+            QMessageBox::critical(
+                &window,
+                "Save Error",
+                "Could not save the updated record."
+                );
+            return;
+        }
+
+        QTextStream out(&file);
+        out << headerLine << '\n';
+
+        for (int row = 0; row < table->rowCount(); row++) {
+
+            QStringList values;
+
+            for (int col = 0; col < columns.size(); col++) {
+
+                QString value;
+
+                if (row == selectedRow) {
+                    value = updatedValues[col];
+                }
+                else if (table->item(row, col)) {
+                    value = table->item(row, col)->text();
+                }
+
+                values.append(value);
+            }
+
+            out << values.join(',') << '\n';
+        }
+
+        file.close();
+
+        // UPDATE THE TABLE VIEW
+
+        for (int col = 0; col < updatedValues.size(); col++) {
+            table->setItem(
+                selectedRow,
+                col,
+                new QTableWidgetItem(updatedValues[col])
+                );
+        }
+
+        table->selectRow(selectedRow);
+
+        window.statusBar()->showMessage(
+            "Record updated in " + tblName
+            );
+
+        QMessageBox::information(
+            &window,
+            "Success",
+            "Record updated successfully!"
+            );
+    });
+
+
+    // DELETE RECORD
+
+    QObject::connect(remove, &QPushButton::clicked, [&]() {
+
+        QListWidgetItem *selectedDB = databaseList->currentItem();
+        QListWidgetItem *selectedTable = tableList->currentItem();
+
+        if (!selectedDB || !selectedTable) {
+            QMessageBox::warning(
+                &window,
+                "No Table Selected",
+                "Please select a database and table first."
+                );
+            return;
+        }
+
+        int selectedRow = table->currentRow();
+
+        if (selectedRow < 0) {
+            QMessageBox::warning(
+                &window,
+                "No Record Selected",
+                "Please select a record to delete."
+                );
+            return;
+        }
+
+        QString tblName = selectedTable->text();
+
+        QMessageBox::StandardButton answer = QMessageBox::question(
+            &window,
+            "Confirm Delete",
+            "Are you sure you want to delete the selected record?",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No
+            );
+
+        if (answer != QMessageBox::Yes)
+            return;
+
+        QString filePath =
+            QDir(projectPath).filePath(
+                selectedDB->text() + "/" + tblName + ".csv"
+                );
+
+        // READ THE CSV HEADER
+
+        QFile file(filePath);
+
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::critical(
+                &window,
+                "File Error",
+                "Could not open the table file."
+                );
+            return;
+        }
+
+        QTextStream in(&file);
+
+        if (in.atEnd()) {
+            file.close();
+
+            QMessageBox::warning(
+                &window,
+                "Empty Table",
+                "The table file is empty."
+                );
+            return;
+        }
+
+        QString headerLine = in.readLine();
+        file.close();
+
+        // REWRITE THE FILE WITHOUT THE SELECTED RECORD
+
+        if (!file.open(QIODevice::WriteOnly |
+                       QIODevice::Truncate |
+                       QIODevice::Text)) {
+
+            QMessageBox::critical(
+                &window,
+                "Save Error",
+                "Could not update the table file."
+                );
+            return;
+        }
+
+        QTextStream out(&file);
+        out << headerLine << '\n';
+
+        for (int row = 0; row < table->rowCount(); row++) {
+
+            if (row == selectedRow)
+                continue;
+
+            QStringList values;
+
+            for (int col = 0; col < table->columnCount(); col++) {
+
+                QString value;
+
+                if (table->item(row, col))
+                    value = table->item(row, col)->text();
+
+                values.append(value);
+            }
+
+            out << values.join(',') << '\n';
+        }
+
+        file.close();
+
+        // REMOVE THE RECORD FROM THE GUI
+
+        table->removeRow(selectedRow);
+
+        window.statusBar()->showMessage(
+            "Record deleted from " + tblName
+            );
+
+        QMessageBox::information(
+            &window,
+            "Success",
+            "Record deleted successfully!"
+            );
+    });
+
+
+    // SEARCH RECORD
+
+    QObject::connect(search, &QPushButton::clicked, [&]() {
+
+        QListWidgetItem *selectedDB = databaseList->currentItem();
+        QListWidgetItem *selectedTable = tableList->currentItem();
+
+        if (!selectedDB || !selectedTable) {
+            QMessageBox::warning(
+                &window,
+                "No Table Selected",
+                "Please select a database and table first."
+                );
+            return;
+        }
+
+        if (table->rowCount() == 0) {
+            QMessageBox::information(
+                &window,
+                "No Records",
+                "There are no records to search."
+                );
+            return;
+        }
+
+        bool ok;
+
+        QString keyword = QInputDialog::getText(
+            &window,
+            "Search Records",
+            "Enter text to search in all columns:",
+            QLineEdit::Normal,
+            "",
+            &ok
+            );
+
+        if (!ok)
+            return;
+
+        keyword = keyword.trimmed();
+
+        if (keyword.isEmpty()) {
+            QMessageBox::warning(
+                &window,
+                "Empty Search",
+                "Please enter something to search for."
+                );
+            return;
+        }
+
+        // FIND MATCHES IN ALL COLUMNS
+
+        QList<int> matchingRows;
+
+        for (int row = 0; row < table->rowCount(); row++) {
+
+            bool found = false;
+
+            for (int col = 0; col < table->columnCount(); col++) {
+
+                QTableWidgetItem *cell = table->item(row, col);
+
+                if (cell && cell->text().contains(
+                        keyword, Qt::CaseInsensitive)) {
+
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+                matchingRows.append(row);
+        }
+
+        // DISPLAY SEARCH RESULT
+
+        if (matchingRows.isEmpty()) {
+
+            window.statusBar()->showMessage(
+                "No matching records found."
+                );
+
+            QMessageBox::information(
+                &window,
+                "Search Result",
+                "No matching records found."
+                );
+
+            return;
+        }
+
+        int firstMatch = matchingRows.first();
+
+        table->selectRow(firstMatch);
+        table->setCurrentCell(firstMatch, 0);
+
+        if (table->item(firstMatch, 0))
+            table->scrollToItem(table->item(firstMatch, 0));
+
+        window.statusBar()->showMessage(
+            QString::number(matchingRows.size()) +
+            " matching record(s) found."
+            );
+
+        QMessageBox::information(
+            &window,
+            "Search Result",
+            QString::number(matchingRows.size()) +
+                " matching record(s) found.\n\n"
+                "The first matching record has been selected."
+            );
+    });
+
+    // SEARCH IN A SELECTED COLUMN
+
+    QObject::connect(searchColumn, &QPushButton::clicked, [&]() {
+
+        if (table->columnCount() == 0 || table->rowCount() == 0) {
+            QMessageBox::information(
+                &window,
+                "No Records",
+                "Load a table containing records first."
+                );
+            return;
+        }
+
+        QStringList columns;
+
+        for (int col = 0; col < table->columnCount(); col++)
+            columns.append(table->horizontalHeaderItem(col)->text());
+
+        bool ok;
+
+        QString selectedColumn = QInputDialog::getItem(
+            &window,
+            "Select Column",
+            "Choose the column to search:",
+            columns,
+            0,
+            false,
+            &ok
+            );
+
+        if (!ok)
+            return;
+
+        int columnIndex = columns.indexOf(selectedColumn);
+
+        QString keyword = QInputDialog::getText(
+                              &window,
+                              "Search Column",
+                              "Enter search text:",
+                              QLineEdit::Normal,
+                              "",
+                              &ok
+                              ).trimmed();
+
+        if (!ok)
+            return;
+
+        if (keyword.isEmpty()) {
+            QMessageBox::warning(
+                &window,
+                "Empty Search",
+                "Please enter a search value."
+                );
+            return;
+        }
+
+        QList<int> matches;
+
+        for (int row = 0; row < table->rowCount(); row++) {
+            QTableWidgetItem *cell = table->item(row, columnIndex);
+
+            if (cell && cell->text().contains(
+                    keyword, Qt::CaseInsensitive)) {
+                matches.append(row);
+            }
+        }
+
+        if (matches.isEmpty()) {
+            window.statusBar()->showMessage("No matching records found.");
+            QMessageBox::information(
+                &window,
+                "Search Result",
+                "No matching records found in " + selectedColumn + "."
+                );
+            return;
+        }
+
+        int firstMatch = matches.first();
+        table->selectRow(firstMatch);
+        table->setCurrentCell(firstMatch, columnIndex);
+
+        if (table->item(firstMatch, columnIndex))
+            table->scrollToItem(table->item(firstMatch, columnIndex));
+
+        window.statusBar()->showMessage(
+            QString::number(matches.size()) + " matching record(s) found in " + selectedColumn + "."
+            );
+
+        QMessageBox::information(
+            &window,
+            "Search Result",
+            QString::number(matches.size()) +
+                " matching record(s) found in column '" + selectedColumn + "'.\n\n"
+                                                                           "The first matching record has been selected."
+            );
+    });
+
+    // SORT RECORDS BY A SELECTED COLUMN
+
+    QObject::connect(sort, &QPushButton::clicked, [&]() {
+
+        if (table->columnCount() == 0 || table->rowCount() == 0) {
+            QMessageBox::information(
+                &window,
+                "No Records",
+                "Load a table containing records first."
+                );
+            return;
+        }
+
+        QStringList columns;
+
+        for (int col = 0; col < table->columnCount(); col++)
+            columns.append(table->horizontalHeaderItem(col)->text());
+
+        bool ok;
+
+        QString selectedColumn = QInputDialog::getItem(
+            &window,
+            "Sort Records",
+            "Choose the column to sort by:",
+            columns,
+            0,
+            false,
+            &ok
+            );
+
+        if (!ok)
+            return;
+
+        QStringList orders;
+        orders << "Ascending (A to Z / smallest first)"
+               << "Descending (Z to A / largest first)";
+
+        QString selectedOrder = QInputDialog::getItem(
+            &window,
+            "Sort Order",
+            "Choose sorting order:",
+            orders,
+            0,
+            false,
+            &ok
+            );
+
+        if (!ok)
+            return;
+
+        int columnIndex = columns.indexOf(selectedColumn);
+
+        Qt::SortOrder order = selectedOrder.startsWith("Ascending")
+                                  ? Qt::AscendingOrder
+                                  : Qt::DescendingOrder;
+
+        table->sortItems(columnIndex, order);
+
+        window.statusBar()->showMessage(
+            "Sorted by " + selectedColumn + " (" +
+            (order == Qt::AscendingOrder ? "ascending" : "descending") + ")."
             );
     });
 
